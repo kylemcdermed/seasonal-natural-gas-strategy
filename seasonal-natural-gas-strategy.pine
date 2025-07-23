@@ -1,0 +1,191 @@
+//@version=5
+strategy("NG June Contract Seasonal", shorttitle="NG Jun Season", overlay=true, 
+         default_qty_type=strategy.fixed, default_qty_value=1, 
+         pyramiding=0, calc_on_order_fills=false, process_orders_on_close=true)
+
+// Strategy Settings
+contracts_to_trade = input.int(1, title="Number of Contracts", minval=1, maxval=5, group="Position Settings")
+enable_strategy = input.bool(true, title="Enable Strategy", group="Strategy Settings")
+
+// Risk Management (optional safety stops)
+use_stop_loss = input.bool(false, title="Use Emergency Stop Loss", group="Risk Management")
+stop_loss_pct = input.float(15.0, title="Emergency Stop Loss (%)", minval=10.0, maxval=25.0, group="Risk Management")
+use_take_profit = input.bool(false, title="Use Take Profit", group="Risk Management")
+take_profit_pct = input.float(25.0, title="Take Profit (%)", minval=15.0, maxval=50.0, group="Risk Management")
+
+// Date logic
+entry_target_month = 2  // February
+entry_target_day = 25   // February 25th
+exit_target_month = 4   // April  
+exit_target_day = 15    // April 15th
+
+// Entry condition - February 25th or next trading day
+is_february = month == entry_target_month
+entry_condition = is_february and dayofmonth >= entry_target_day and dayofmonth <= entry_target_day + 2 and 
+                 enable_strategy and strategy.position_size == 0
+
+// Exit condition - April 15th or previous trading day
+is_april = month == exit_target_month
+exit_condition = is_april and dayofmonth >= exit_target_day - 2 and dayofmonth <= exit_target_day and strategy.position_size > 0
+
+// Position tracking
+var float entry_price = na
+var int actual_entry_day = na
+var int actual_entry_month = na
+var bool trade_completed_this_year = false
+
+// Reset yearly flag in January
+if month == 1
+    trade_completed_this_year := false
+
+// Entry Logic - Buy June NG contract at close of February 25th
+if entry_condition and not trade_completed_this_year
+    strategy.entry("Long_NG_June", strategy.long, qty=contracts_to_trade, comment="Feb 25 Entry")
+    entry_price := close
+    actual_entry_day := dayofmonth
+    actual_entry_month := month
+
+// Exit Logic - Sell at close of April 15th
+if exit_condition
+    strategy.close("Long_NG_June", comment="Apr 15 Exit")
+    entry_price := na
+    trade_completed_this_year := true
+
+// Optional take profit
+if use_take_profit and strategy.position_size > 0 and not na(entry_price)
+    if close >= entry_price * (1 + take_profit_pct / 100)
+        strategy.close("Long_NG_June", comment="Take Profit")
+        entry_price := na
+        trade_completed_this_year := true
+
+// Emergency stop loss (optional)
+if use_stop_loss and strategy.position_size > 0 and not na(entry_price)
+    if close <= entry_price * (1 - stop_loss_pct / 100)
+        strategy.close("Long_NG_June", comment="Emergency Stop")
+        entry_price := na
+        trade_completed_this_year := true
+
+// Force exit if holding past April (safety measure)
+if strategy.position_size > 0 and month == 5
+    strategy.close("Long_NG_June", comment="Month End Safety")
+    entry_price := na
+    trade_completed_this_year := true
+
+// Visual signals
+plotshape(entry_condition and not trade_completed_this_year, title="Entry Signal", 
+          location=location.belowbar, style=shape.triangleup, color=color.green, 
+          size=size.large, text="BUY NG")
+
+plotshape(exit_condition, title="Exit Signal", 
+          location=location.abovebar, style=shape.triangledown, color=color.orange, 
+          size=size.large, text="SELL NG")
+
+plotshape(use_take_profit and strategy.position_size > 0 and not na(entry_price) and 
+          close >= entry_price * (1 + take_profit_pct / 100), title="Take Profit Hit", 
+          location=location.abovebar, style=shape.diamond, color=color.blue, size=size.normal, text="TARGET")
+
+// Plot entry level
+entry_line = plot(strategy.position_size > 0 ? entry_price : na, "Entry Level", color.green, 2)
+
+// Plot stop loss if enabled
+stop_line = plot(use_stop_loss and strategy.position_size > 0 and not na(entry_price) ? entry_price * (1 - stop_loss_pct / 100) : na, "Stop Loss", color.red, 1)
+
+// Plot take profit if enabled
+target_line = plot(use_take_profit and strategy.position_size > 0 and not na(entry_price) ? entry_price * (1 + take_profit_pct / 100) : na, "Take Profit", color.blue, 1)
+
+// Background highlighting for different periods
+// February entry period
+bgcolor(is_february and dayofmonth >= 23 and dayofmonth <= 28 ? color.new(color.green, 92) : na, title="Entry Window")
+
+// March-April holding period  
+bgcolor((month == 3 or (month == 4 and dayofmonth <= 15)) and strategy.position_size > 0 ? color.new(color.yellow, 95) : na, title="Holding Period")
+
+// April exit period
+bgcolor(is_april and dayofmonth >= 13 and dayofmonth <= 17 ? color.new(color.red, 92) : na, title="Exit Window")
+
+// Information table
+if barstate.islast
+    var table info_table = table.new(position.top_right, 2, 11, bgcolor=color.white, border_width=1)
+    
+    month_names = array.from("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
+    current_month_name = array.get(month_names, month - 1)
+    
+    table.cell(info_table, 0, 0, "NATURAL GAS", text_color=color.white, text_size=size.normal, bgcolor=color.blue)
+    table.cell(info_table, 1, 0, "JUNE CONTRACT", text_color=color.white, text_size=size.normal, bgcolor=color.blue)
+    
+    table.cell(info_table, 0, 1, "Current Date:", text_color=color.black, text_size=size.small)
+    table.cell(info_table, 1, 1, current_month_name + " " + str.tostring(dayofmonth), text_color=color.blue, text_size=size.small)
+    
+    table.cell(info_table, 0, 2, "Entry Target:", text_color=color.black, text_size=size.small)
+    table.cell(info_table, 1, 2, "Feb 25", text_color=color.green, text_size=size.small)
+    
+    table.cell(info_table, 0, 3, "Exit Target:", text_color=color.black, text_size=size.small)
+    table.cell(info_table, 1, 3, "Apr 15", text_color=color.red, text_size=size.small)
+    
+    table.cell(info_table, 0, 4, "Hold Period:", text_color=color.black, text_size=size.small)
+    table.cell(info_table, 1, 4, "~50 Days", text_color=color.purple, text_size=size.small)
+    
+    table.cell(info_table, 0, 5, "Position:", text_color=color.black, text_size=size.small)
+    pos_text = strategy.position_size > 0 ? "LONG " + str.tostring(strategy.position_size, "#") : "NONE"
+    pos_color = strategy.position_size > 0 ? color.green : color.gray
+    table.cell(info_table, 1, 5, pos_text, text_color=pos_color, text_size=size.small)
+    
+    table.cell(info_table, 0, 6, "Entry Price:", text_color=color.black, text_size=size.small)
+    entry_text = na(entry_price) ? "N/A" : "$" + str.tostring(entry_price, "#.###")
+    table.cell(info_table, 1, 6, entry_text, text_color=color.blue, text_size=size.small)
+    
+    table.cell(info_table, 0, 7, "Entry Date:", text_color=color.black, text_size=size.small)
+    entry_date_text = na(actual_entry_day) or na(actual_entry_month) ? "N/A" : 
+                     array.get(month_names, actual_entry_month - 1) + " " + str.tostring(actual_entry_day)
+    table.cell(info_table, 1, 7, entry_date_text, text_color=color.blue, text_size=size.small)
+    
+    table.cell(info_table, 0, 8, "Days Held:", text_color=color.black, text_size=size.small)
+    days_held = if strategy.position_size > 0 and not na(actual_entry_day) and not na(actual_entry_month)
+        if actual_entry_month == 2 and month == 2
+            dayofmonth - actual_entry_day
+        else if actual_entry_month == 2 and month == 3
+            (28 - actual_entry_day) + dayofmonth  // Assuming non-leap year
+        else if actual_entry_month == 2 and month == 4
+            (28 - actual_entry_day) + 31 + dayofmonth
+        else
+            0
+    else
+        0
+    table.cell(info_table, 1, 8, str.tostring(days_held), text_color=color.purple, text_size=size.small)
+    
+    table.cell(info_table, 0, 9, "Trade Status:", text_color=color.black, text_size=size.small)
+    status_text = if is_february and dayofmonth >= 23 and dayofmonth <= 28
+        "ENTRY WINDOW"
+    else if (month == 3 or (month == 4 and dayofmonth <= 15)) and strategy.position_size > 0
+        "HOLDING"
+    else if is_april and dayofmonth >= 13 and dayofmonth <= 17
+        "EXIT WINDOW"
+    else
+        "INACTIVE"
+    status_color = if status_text == "ENTRY WINDOW"
+        color.green
+    else if status_text == "HOLDING"
+        color.yellow
+    else if status_text == "EXIT WINDOW"
+        color.red
+    else
+        color.gray
+    table.cell(info_table, 1, 9, status_text, text_color=status_color, text_size=size.small)
+    
+    table.cell(info_table, 0, 10, "Unrealized P&L:", text_color=color.black, text_size=size.small)
+    unrealized_pnl = strategy.openprofit
+    pnl_text = "$" + str.tostring(unrealized_pnl, "#.##")
+    pnl_color = unrealized_pnl > 0 ? color.green : unrealized_pnl < 0 ? color.red : color.gray
+    table.cell(info_table, 1, 10, pnl_text, text_color=pnl_color, text_size=size.small)
+
+// Alert conditions
+alertcondition(entry_condition and not trade_completed_this_year, title="NG Entry Alert", 
+               message="Natural Gas: BUY June Contract - February 25th Entry")
+alertcondition(exit_condition, title="NG Exit Alert", 
+               message="Natural Gas: SELL June Contract - April 15th Exit")
+alertcondition(use_take_profit and strategy.position_size > 0 and not na(entry_price) and 
+               close >= entry_price * (1 + take_profit_pct / 100), title="NG Take Profit", 
+               message="Natural Gas: Take Profit Target Hit")
+alertcondition(use_stop_loss and strategy.position_size > 0 and not na(entry_price) and 
+               close <= entry_price * (1 - stop_loss_pct / 100), title="NG Stop Loss", 
+               message="Natural Gas: Emergency Stop Loss Hit")
